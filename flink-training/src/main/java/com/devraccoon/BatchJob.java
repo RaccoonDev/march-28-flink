@@ -18,49 +18,41 @@
 
 package com.devraccoon;
 
+import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.java.ExecutionEnvironment;
+import org.apache.flink.api.java.operators.DataSource;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.util.Collector;
 
-/**
- * Skeleton for a Flink Batch Job.
- *
- * <p>For a tutorial how to write a Flink batch application, check the
- * tutorials and examples on the <a href="https://flink.apache.org/docs/stable/">Flink Website</a>.
- *
- * <p>To package your application into a JAR file for execution,
- * change the main class in the POM.xml file to this class (simply search for 'mainClass')
- * and run 'mvn clean package' on the command line.
- */
 public class BatchJob {
 
 	public static void main(String[] args) throws Exception {
-		// set up the batch execution environment
 		final ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
 
+
+		DataSource<String> stringDataSource = env.readTextFile("data/words.txt");
 		/*
-		 * Here, you can start creating your execution plan for Flink.
-		 *
-		 * Start with getting some data from the environment, like
-		 * 	env.readTextFile(textPath);
-		 *
-		 * then, transform the resulting DataSet<String> using operations
-		 * like
-		 * 	.filter()
-		 * 	.flatMap()
-		 * 	.join()
-		 * 	.coGroup()
-		 *
-		 * and many more.
-		 * Have a look at the programming guide for the Java API:
-		 *
-		 * https://flink.apache.org/docs/latest/apis/batch/index.html
-		 *
-		 * and the examples
-		 *
-		 * https://flink.apache.org/docs/latest/apis/batch/examples.html
-		 *
+			element1 > sam said something
+			element2 > something else happened
+		 */
+		stringDataSource.flatMap(new FlatMapFunction<String, Tuple2<String, Integer>>() {
+			@Override
+			public void flatMap(String element, Collector<Tuple2<String, Integer>> collector) throws Exception {
+				String[] words = element.split(" ");
+				for(String word: words) {
+					collector.collect(Tuple2.of(word, 1));
+				}
+			}
+		}).groupBy(0).sum(1).print();
+		/*
+			element1 > (sam, 1)
+			element2 > (said, 1)
+			element3 > (something, 1)
+			element4 > (something, 1)
+			element5 > (else, 1)
+			...
 		 */
 
-		// execute program
 		env.execute("Flink Batch Java API Skeleton");
 	}
 }
