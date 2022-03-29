@@ -18,12 +18,14 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.file.sink.FileSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
@@ -109,7 +111,7 @@ public class PlayersEngagementRateJob {
                 .build();
         countOfUsersWithoutOfflineEvents.sinkTo(fileSink);
 
-        // processPlayersEngagement(playerEvents);
+        processPlayersEngagement(playerEvents);
 
         env.execute("Battle Net Engagement Rate Job");
     }
@@ -199,6 +201,15 @@ class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Long, Long
     private long registrations;
     private long online;
 
+    private transient Counter counterRegistrations;
+    private transient Counter counterOnline;
+
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        this.counterRegistrations = getRuntimeContext().getMetricGroup().counter("registrations_total");
+        this.counterOnline = getRuntimeContext().getMetricGroup().counter("online_total");
+    }
+
     @Override
     public void processElement(
             PlayerEvent playerEvent,
@@ -208,12 +219,15 @@ class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Long, Long
         switch (playerEvent.getEventType()) {
             case REGISTERED:
                 registrations++;
+                counterRegistrations.inc();
                 break;
             case ONLINE:
                 online++;
+                counterOnline.inc();
                 break;
             case OFFLINE:
                 online--;
+                counterOnline.dec();
         }
 
         collector.collect(Tuple2.of(registrations, online));
