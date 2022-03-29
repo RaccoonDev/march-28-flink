@@ -9,15 +9,18 @@ import io.confluent.kafka.serializers.KafkaAvroDeserializer;
 import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.util.Collector;
-import org.apache.flink.util.PropertiesUtil;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 
 import java.io.IOException;
@@ -29,6 +32,8 @@ import java.util.Properties;
 public class PlayersEngagementRateJob {
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        env.setMaxParallelism(1);
 
         final String topic = "battlenet.server.events.v1";
         final String schemaRegistryUrl = "http://localhost:8081";
@@ -40,8 +45,48 @@ public class PlayersEngagementRateJob {
                 .setDeserializer(new PlayerEventAvroDeserializerScheme(schemaRegistryUrl, topic))
                 .build();
 
-        env.fromSource(kafkaSource, WatermarkStrategy.noWatermarks(), "player-events")
-                .print();
+        DataStream<PlayerEvent> playerEvents = env.fromSource(
+                kafkaSource,
+                WatermarkStrategy.noWatermarks(), "player-events");
+
+        DataStream<Tuple2<Long, Long>> onlineAndRegistrationCountsStream = playerEvents.process(new ProcessFunction<PlayerEvent, Tuple2<Long, Long>>() {
+
+            private long registrations;
+            private long online;
+
+            @Override
+            public void processElement(
+                    PlayerEvent playerEvent,
+                    ProcessFunction<PlayerEvent, Tuple2<Long, Long>>.Context context,
+                    Collector<Tuple2<Long, Long>> collector) throws Exception {
+
+                switch (playerEvent.getEventType()) {
+                    case REGISTERED:
+                        registrations++;
+                        break;
+                    case ONLINE:
+                        online++;
+                        break;
+                    case OFFLINE:
+                        online--;
+                }
+
+                collector.collect(Tuple2.of(registrations, online));
+            }
+        });
+
+        DataStream<String> playersEngagementRatesStream = onlineAndRegistrationCountsStream.map(new MapFunction<Tuple2<Long, Long>, String>() {
+            @Override
+            public String map(Tuple2<Long, Long> pair) throws Exception {
+                Long registrations = pair.f0;
+                Long online = pair.f1;
+                return String.format(
+                        "Number of registered players: %d; Online players: %d; Rate of online users: %.2f",
+                        registrations, online, ((double) online / (double) registrations) * 100.0);
+            }
+        });
+
+        playersEngagementRatesStream.print();
 
         env.execute("Battle Net Engagement Rate Job");
     }
