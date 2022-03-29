@@ -43,7 +43,7 @@ import java.util.stream.StreamSupport;
 
 /*
   For flink cluster:
-  --schema-registry-url http://schema-registry:8081 --bootstrap-servers broker:29092
+  --schema-registry-url http://schema-registry:8081 --bootstrap-servers broker:29092 --checkpoint-path s3://outputs/checkpoints
 
   For intellij:
   --schema-registry-url http://localhost:8081 --bootstrap-servers localhost:9092
@@ -51,15 +51,19 @@ import java.util.stream.StreamSupport;
 public class PlayersEngagementRateJob {
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.enableCheckpointing(Duration.ofSeconds(10).toMillis());
-        env.getCheckpointConfig().setCheckpointStorage("file:///Users/dmytro.m/dev/github.com/RaccoonDev/march-28-flink/flink-training/out/checkpoints");
-
 
         ParameterTool params = ParameterTool.fromArgs(args);
 
         final String topic = "battlenet.server.events.v1";
         final String schemaRegistryUrl = Optional.ofNullable(params.get("schema-registry-url")).orElse("http://localhost:8081");
         final String bootstrapServers = Optional.ofNullable(params.get("bootstrap-servers")).orElse("localhost:9092");
+        final String checkpointPath = params.getRequired("checkpoint-path");
+
+        env.enableCheckpointing(Duration.ofSeconds(10).toMillis());
+        env.getCheckpointConfig().setCheckpointStorage(checkpointPath);
+
+
+
 
         KafkaSource<PlayerEvent> kafkaSource = KafkaSource.<PlayerEvent>builder()
                 .setBootstrapServers(bootstrapServers)
