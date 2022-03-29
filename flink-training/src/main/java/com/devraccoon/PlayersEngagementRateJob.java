@@ -8,7 +8,9 @@ import io.confluent.kafka.serializers.AbstractKafkaAvroSerDeConfig;
 import io.confluent.kafka.serializers.KafkaAvroDeserializer;
 import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
 import org.apache.avro.generic.GenericRecord;
+import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -20,16 +22,24 @@ import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsIni
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+import org.apache.flink.streaming.api.datastream.WindowedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
+import org.apache.flink.streaming.api.functions.windowing.AllWindowFunction;
+import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
+import java.util.stream.StreamSupport;
 
 /*
   For flink cluster:
@@ -41,14 +51,15 @@ import java.util.Properties;
 public class PlayersEngagementRateJob {
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(1);
-        env.setMaxParallelism(1);
+        env.enableCheckpointing(Duration.ofSeconds(10).toMillis());
+        env.getCheckpointConfig().setCheckpointStorage("file:///Users/dmytro.m/dev/github.com/RaccoonDev/march-28-flink/flink-training/out/checkpoints");
+
 
         ParameterTool params = ParameterTool.fromArgs(args);
 
         final String topic = "battlenet.server.events.v1";
-        final String schemaRegistryUrl = params.getRequired("schema-registry-url");//"http://localhost:8081";
-        final String bootstrapServers = params.getRequired("bootstrap-servers"); //"localhost:9092";
+        final String schemaRegistryUrl = Optional.ofNullable(params.get("schema-registry-url")).orElse("http://localhost:8081");
+        final String bootstrapServers = Optional.ofNullable(params.get("bootstrap-servers")).orElse("localhost:9092");
 
         KafkaSource<PlayerEvent> kafkaSource = KafkaSource.<PlayerEvent>builder()
                 .setBootstrapServers(bootstrapServers)
@@ -58,12 +69,44 @@ public class PlayersEngagementRateJob {
                 .setDeserializer(new PlayerEventAvroDeserializerScheme(schemaRegistryUrl, topic))
                 .build();
 
+        WatermarkStrategy<PlayerEvent> watermarkStrategy = WatermarkStrategy
+                .<PlayerEvent>forBoundedOutOfOrderness(Duration.ofSeconds(2))
+                .withTimestampAssigner(new SerializableTimestampAssigner<PlayerEvent>() {
+                    @Override
+                    public long extractTimestamp(PlayerEvent playerEvent, long previouslyAssignedTimestampToThisEvent) {
+                        return playerEvent.getEventTime().toEpochMilli();
+                    }
+                })
+                .withIdleness(Duration.ofSeconds(2));
+
         DataStream<PlayerEvent> playerEvents = env.fromSource(
                 kafkaSource,
-                WatermarkStrategy.noWatermarks(), "player-events");
+                watermarkStrategy,
+                "player-events");
 
+        KeyedStream<PlayerEvent, UUID> playerEventUUIDKeyedStream = playerEvents.keyBy(PlayerEvent::getPlayerId);
+        WindowedStream<PlayerEvent, UUID, TimeWindow> window = playerEventUUIDKeyedStream.window(SlidingEventTimeWindows.of(Time.seconds(20), Time.seconds(5)));
+        DataStream<Integer> process = window.process(new DetectOfflineEvent());
+        DataStream<String> countOfUsersWithoutOfflineEvents = process
+                .windowAll(SlidingEventTimeWindows.of(Time.seconds(20), Time.seconds(5)))
+                        .apply(new AllWindowFunction<Integer, String, TimeWindow>() {
+                            @Override
+                            public void apply(TimeWindow timeWindow, Iterable<Integer> iterable, Collector<String> collector) throws Exception {
+                                long count = StreamSupport.stream(iterable.spliterator(), false).count();
+                                String message = String.format("Window: [%s]; Number of people without offline event: %d", timeWindow.toString(), count);
+                                collector.collect(message);
+                            }
+                        });
+
+        countOfUsersWithoutOfflineEvents.writeAsText("out/noOfflineCounts_2.txt", FileSystem.WriteMode.OVERWRITE);
+
+        // processPlayersEngagement(playerEvents);
+
+        env.execute("Battle Net Engagement Rate Job");
+    }
+
+    private static void processPlayersEngagement(DataStream<PlayerEvent> playerEvents) {
         DataStream<Tuple2<Long, Long>> onlineAndRegistrationCountsStream = playerEvents.process(new PlayerEventToCounts());
-
         DataStream<String> playersEngagementRatesStream = onlineAndRegistrationCountsStream.map(new MapFunction<Tuple2<Long, Long>, String>() {
             @Override
             public String map(Tuple2<Long, Long> pair) throws Exception {
@@ -76,8 +119,6 @@ public class PlayersEngagementRateJob {
         });
 
         playersEngagementRatesStream.writeAsText("s3://outputs/engagementrates.txt", FileSystem.WriteMode.OVERWRITE);
-
-        env.execute("Battle Net Engagement Rate Job");
     }
 }
 
@@ -112,18 +153,21 @@ class PlayerEventAvroDeserializerScheme implements KafkaRecordDeserializationSch
         String schemaClassName = r.getSchema().getName();
 
         Instant eventTime = Instant.ofEpochMilli((long) r.get("eventTime"));
+        Optional<UUID> maybePlayerId = Optional.ofNullable(r.get("playerId")).map(Object::toString).map(UUID::fromString);
 
-        switch (schemaClassName) {
-            case "PlayerRegistered":
-                collector.collect(new PlayerEvent(eventTime, PlayerEventType.REGISTERED));
-                break;
-            case "PlayerOnline":
-                collector.collect(new PlayerEvent(eventTime, PlayerEventType.ONLINE));
-                break;
-            case "PlayerOffline":
-                collector.collect(new PlayerEvent(eventTime, PlayerEventType.OFFLINE));
-                break;
-        }
+        maybePlayerId.ifPresent(playerId -> {
+            switch (schemaClassName) {
+                case "PlayerRegistered":
+                    collector.collect(new PlayerEvent(eventTime, PlayerEventType.REGISTERED, playerId));
+                    break;
+                case "PlayerOnline":
+                    collector.collect(new PlayerEvent(eventTime, PlayerEventType.ONLINE, playerId));
+                    break;
+                case "PlayerOffline":
+                    collector.collect(new PlayerEvent(eventTime, PlayerEventType.OFFLINE, playerId));
+                    break;
+            }
+        });
     }
 
     @Override
@@ -164,5 +208,20 @@ class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Long, Long
         }
 
         collector.collect(Tuple2.of(registrations, online));
+    }
+}
+
+
+class DetectOfflineEvent extends ProcessWindowFunction<PlayerEvent, Integer, UUID, TimeWindow> {
+    @Override
+    public void process(
+            UUID uuid,
+            ProcessWindowFunction<PlayerEvent, Integer, UUID, TimeWindow>.Context context,
+            Iterable<PlayerEvent> iterable,
+            Collector<Integer> collector) throws Exception {
+        if (StreamSupport.stream(iterable.spliterator(), false)
+                .anyMatch(e -> e.getEventType() == PlayerEventType.OFFLINE)) {
+            collector.collect(1);
+        }
     }
 }
