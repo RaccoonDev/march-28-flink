@@ -14,9 +14,11 @@ import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
+import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
+import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
@@ -29,16 +31,27 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 
+/*
+  For flink cluster:
+  --schema-registry-url http://schema-registry:8081 --bootstrap-servers broker:29092
+
+  For intellij:
+  --schema-registry-url http://localhost:8081 --bootstrap-servers localhost:9092
+ */
 public class PlayersEngagementRateJob {
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
         env.setMaxParallelism(1);
 
+        ParameterTool params = ParameterTool.fromArgs(args);
+
         final String topic = "battlenet.server.events.v1";
-        final String schemaRegistryUrl = "http://localhost:8081";
+        final String schemaRegistryUrl = params.getRequired("schema-registry-url");//"http://localhost:8081";
+        final String bootstrapServers = params.getRequired("bootstrap-servers"); //"localhost:9092";
+
         KafkaSource<PlayerEvent> kafkaSource = KafkaSource.<PlayerEvent>builder()
-                .setBootstrapServers("localhost:9092")
+                .setBootstrapServers(bootstrapServers)
                 .setTopics(topic)
                 .setGroupId("battle-net-events-processor-group-1")
                 .setStartingOffsets(OffsetsInitializer.earliest())
@@ -49,31 +62,7 @@ public class PlayersEngagementRateJob {
                 kafkaSource,
                 WatermarkStrategy.noWatermarks(), "player-events");
 
-        DataStream<Tuple2<Long, Long>> onlineAndRegistrationCountsStream = playerEvents.process(new ProcessFunction<PlayerEvent, Tuple2<Long, Long>>() {
-
-            private long registrations;
-            private long online;
-
-            @Override
-            public void processElement(
-                    PlayerEvent playerEvent,
-                    ProcessFunction<PlayerEvent, Tuple2<Long, Long>>.Context context,
-                    Collector<Tuple2<Long, Long>> collector) throws Exception {
-
-                switch (playerEvent.getEventType()) {
-                    case REGISTERED:
-                        registrations++;
-                        break;
-                    case ONLINE:
-                        online++;
-                        break;
-                    case OFFLINE:
-                        online--;
-                }
-
-                collector.collect(Tuple2.of(registrations, online));
-            }
-        });
+        DataStream<Tuple2<Long, Long>> onlineAndRegistrationCountsStream = playerEvents.process(new PlayerEventToCounts());
 
         DataStream<String> playersEngagementRatesStream = onlineAndRegistrationCountsStream.map(new MapFunction<Tuple2<Long, Long>, String>() {
             @Override
@@ -86,7 +75,7 @@ public class PlayersEngagementRateJob {
             }
         });
 
-        playersEngagementRatesStream.print();
+        playersEngagementRatesStream.writeAsText("s3://outputs/engagementrates.txt", FileSystem.WriteMode.OVERWRITE);
 
         env.execute("Battle Net Engagement Rate Job");
     }
@@ -124,7 +113,7 @@ class PlayerEventAvroDeserializerScheme implements KafkaRecordDeserializationSch
 
         Instant eventTime = Instant.ofEpochMilli((long) r.get("eventTime"));
 
-        switch(schemaClassName) {
+        switch (schemaClassName) {
             case "PlayerRegistered":
                 collector.collect(new PlayerEvent(eventTime, PlayerEventType.REGISTERED));
                 break;
@@ -150,4 +139,30 @@ class PlayerEventAvroDeserializerScheme implements KafkaRecordDeserializationSch
     }
 
 
+}
+
+class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Long, Long>> {
+
+    private long registrations;
+    private long online;
+
+    @Override
+    public void processElement(
+            PlayerEvent playerEvent,
+            ProcessFunction<PlayerEvent, Tuple2<Long, Long>>.Context context,
+            Collector<Tuple2<Long, Long>> collector) throws Exception {
+
+        switch (playerEvent.getEventType()) {
+            case REGISTERED:
+                registrations++;
+                break;
+            case ONLINE:
+                online++;
+                break;
+            case OFFLINE:
+                online--;
+        }
+
+        collector.collect(Tuple2.of(registrations, online));
+    }
 }
