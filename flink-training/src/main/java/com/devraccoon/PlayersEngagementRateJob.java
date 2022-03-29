@@ -13,14 +13,17 @@ import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
+import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.connector.file.sink.FileSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
 import org.apache.flink.core.fs.FileSystem;
+import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
@@ -62,9 +65,6 @@ public class PlayersEngagementRateJob {
         env.enableCheckpointing(Duration.ofSeconds(10).toMillis());
         env.getCheckpointConfig().setCheckpointStorage(checkpointPath);
 
-
-
-
         KafkaSource<PlayerEvent> kafkaSource = KafkaSource.<PlayerEvent>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopics(topic)
@@ -93,16 +93,21 @@ public class PlayersEngagementRateJob {
         DataStream<Integer> process = window.process(new DetectOfflineEvent());
         DataStream<String> countOfUsersWithoutOfflineEvents = process
                 .windowAll(SlidingEventTimeWindows.of(Time.seconds(20), Time.seconds(5)))
-                        .apply(new AllWindowFunction<Integer, String, TimeWindow>() {
-                            @Override
-                            public void apply(TimeWindow timeWindow, Iterable<Integer> iterable, Collector<String> collector) throws Exception {
-                                long count = StreamSupport.stream(iterable.spliterator(), false).count();
-                                String message = String.format("Window: [%s]; Number of people without offline event: %d", timeWindow.toString(), count);
-                                collector.collect(message);
-                            }
-                        });
+                .apply(new AllWindowFunction<Integer, String, TimeWindow>() {
+                    @Override
+                    public void apply(TimeWindow timeWindow, Iterable<Integer> iterable, Collector<String> collector) throws Exception {
+                        long count = StreamSupport.stream(iterable.spliterator(), false).count();
+                        String message = String.format("Window: [%s]; Number of people without offline event: %d", timeWindow.toString(), count);
+                        collector.collect(message);
+                    }
+                });
 
-        countOfUsersWithoutOfflineEvents.writeAsText("out/noOfflineCounts_2.txt", FileSystem.WriteMode.OVERWRITE);
+        FileSink<String> fileSink = FileSink.forRowFormat(
+                        new Path("s3://outputs/countOfUsersWithoutOfflineEvents"),
+                        new SimpleStringEncoder<String>("UTF-8")
+                )
+                .build();
+        countOfUsersWithoutOfflineEvents.sinkTo(fileSink);
 
         // processPlayersEngagement(playerEvents);
 
