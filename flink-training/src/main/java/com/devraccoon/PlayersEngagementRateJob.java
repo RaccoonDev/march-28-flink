@@ -11,6 +11,7 @@ import org.apache.avro.generic.GenericRecord;
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.state.ValueState;
@@ -31,6 +32,7 @@ import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.WindowedStream;
+import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
@@ -42,6 +44,8 @@ import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -55,6 +59,9 @@ import java.util.stream.StreamSupport;
 
   For intellij:
   --schema-registry-url http://localhost:8081 --bootstrap-servers localhost:9092
+
+    996190c7bcbae2e62942cd848c641dfd - battle-net-events-processor-group-3
+  // last checkpoint: s3://outputs/checkpoints/e9d4ad605e722677e8ffb5f2d0d24b9e/chk-28
  */
 public class PlayersEngagementRateJob {
     public static void main(String[] args) throws Exception {
@@ -67,13 +74,25 @@ public class PlayersEngagementRateJob {
         final String bootstrapServers = Optional.ofNullable(params.get("bootstrap-servers")).orElse("localhost:9092");
         final String checkpointPath = params.getRequired("checkpoint-path");
 
+        env.setRestartStrategy(
+                RestartStrategies.fixedDelayRestart(
+                        5, Duration.ofMinutes(1).toMillis()
+                )
+        );
+
         env.enableCheckpointing(Duration.ofSeconds(10).toMillis());
         env.getCheckpointConfig().setCheckpointStorage(checkpointPath);
+        env.getCheckpointConfig().setCheckpointTimeout(Duration.ofMinutes(15).toMillis());
+        env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
+        env.getCheckpointConfig().setTolerableCheckpointFailureNumber(3);
+        env.getCheckpointConfig().setExternalizedCheckpointCleanup(
+                CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION
+        );
 
         KafkaSource<PlayerEvent> kafkaSource = KafkaSource.<PlayerEvent>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopics(topic)
-                .setGroupId("battle-net-events-processor-group-1")
+                .setGroupId("battle-net-events-processor-group-2-cluster")
                 .setStartingOffsets(OffsetsInitializer.committedOffsets(OffsetResetStrategy.EARLIEST))
                 .setDeserializer(new PlayerEventAvroDeserializerScheme(schemaRegistryUrl, topic))
                 .build();
@@ -126,7 +145,9 @@ public class PlayersEngagementRateJob {
     private static void processPlayersEngagement(DataStream<PlayerEvent> playerEvents) {
         DataStream<Tuple2<Long, Long>> onlineAndRegistrationCountsStream = playerEvents
                 .keyBy(k -> 0)
-                .process(new PlayerEventToCounts());
+                .process(new PlayerEventToCounts())
+                .uid("player-events-processor")
+                .name("");
         DataStream<String> playersEngagementRatesStream = onlineAndRegistrationCountsStream.map(new MapFunction<Tuple2<Long, Long>, String>() {
             @Override
             public String map(Tuple2<Long, Long> pair) throws Exception {
@@ -138,7 +159,14 @@ public class PlayersEngagementRateJob {
             }
         });
 
-        playersEngagementRatesStream.writeAsText("s3://outputs/engagementrates.txt", FileSystem.WriteMode.OVERWRITE);
+        FileSink<String> fileSink = FileSink.forRowFormat(
+                        new Path("s3://outputs/engagementRate_2"),
+                        new SimpleStringEncoder<String>("UTF-8")
+                )
+                .build();
+
+        playersEngagementRatesStream
+                .sinkTo(fileSink);
     }
 }
 
@@ -207,6 +235,8 @@ class PlayerEventAvroDeserializerScheme implements KafkaRecordDeserializationSch
 
 class PlayerEventToCounts extends KeyedProcessFunction<Integer, PlayerEvent, Tuple2<Long, Long>> {
 
+    private static final Logger logger = LoggerFactory.getLogger(PlayerEventToCounts.class);
+
     private transient ValueState<Long> stateRegistrations;
     private transient ValueState<Long> stateOnline;
 
@@ -255,6 +285,7 @@ class PlayerEventToCounts extends KeyedProcessFunction<Integer, PlayerEvent, Tup
         stateRegistrations.update(registrations);
         stateOnline.update(online);
 
+        logger.info("Releasing registrations and online counts: {} {}", registrations, online);
         collector.collect(Tuple2.of(registrations, online));
     }
 }
