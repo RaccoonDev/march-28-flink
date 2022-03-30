@@ -1,6 +1,9 @@
 package com.devraccoon.processes;
 
 import com.devraccoon.models.PlayerEvent;
+import com.devraccoon.models.PlayerOfflineEvent;
+import com.devraccoon.models.PlayerOnlineEvent;
+import com.devraccoon.models.PlayerRegisteredEvent;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
@@ -27,18 +30,15 @@ public class PlayerEventToCounts extends KeyedProcessFunction<Integer, PlayerEve
             KeyedProcessFunction<Integer, PlayerEvent, Tuple2<Long, Long>>.Context context,
             Collector<Tuple2<Long, Long>> collector) {
 
-        switch (playerEvent.getEventType()) {
-            case REGISTERED:
-                registrations++;
-                counterRegistrations.inc();
-                break;
-            case ONLINE:
-                online++;
-                counterOnline.inc();
-                break;
-            case OFFLINE:
-                online--;
-                counterOnline.dec();
+        if(playerEvent instanceof PlayerRegisteredEvent) {
+            registrations++;
+            counterRegistrations.inc();
+        } else if(playerEvent instanceof PlayerOnlineEvent) {
+            online++;
+            counterOnline.inc();
+        } else if (playerEvent instanceof PlayerOfflineEvent) {
+            online--;
+            counterOnline.dec();
         }
 
         collector.collect(Tuple2.of(registrations, online));

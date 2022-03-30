@@ -1,7 +1,7 @@
 package com.devraccoon.processes;
 
 import com.devraccoon.models.PlayerEvent;
-import com.devraccoon.models.PlayerEventType;
+import com.devraccoon.models.PlayerOfflineEvent;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
@@ -18,7 +18,7 @@ public class DetectOfflineEvent extends ProcessWindowFunction<PlayerEvent, Integ
             Iterable<PlayerEvent> iterable,
             Collector<Integer> collector) {
         if (StreamSupport.stream(iterable.spliterator(), false)
-                .anyMatch(e -> e.getEventType() == PlayerEventType.OFFLINE)) {
+                .anyMatch(e -> e instanceof PlayerOfflineEvent)) {
             collector.collect(1);
         }
     }

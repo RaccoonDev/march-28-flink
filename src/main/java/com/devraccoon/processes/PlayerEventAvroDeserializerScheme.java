@@ -1,7 +1,6 @@
 package com.devraccoon.processes;
 
-import com.devraccoon.models.PlayerEvent;
-import com.devraccoon.models.PlayerEventType;
+import com.devraccoon.models.*;
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
 import io.confluent.kafka.serializers.AbstractKafkaAvroSerDeConfig;
@@ -62,16 +61,35 @@ public class PlayerEventAvroDeserializerScheme implements KafkaRecordDeserializa
         maybePlayerId.ifPresent(playerId -> {
             switch (schemaClassName) {
                 case "PlayerRegistered":
-                    collector.collect(new PlayerEvent(eventTime, PlayerEventType.REGISTERED, playerId));
+                    collector.collect(new PlayerRegisteredEvent(eventTime, playerId));
                     break;
                 case "PlayerOnline":
-                    collector.collect(new PlayerEvent(eventTime, PlayerEventType.ONLINE, playerId));
+                    collector.collect(new PlayerOnlineEvent(eventTime, playerId));
                     break;
                 case "PlayerOffline":
-                    collector.collect(new PlayerEvent(eventTime, PlayerEventType.OFFLINE, playerId));
+                    collector.collect(new PlayerOfflineEvent(eventTime, playerId));
+                    break;
+                case "PlayerIsLookingForAGame":
+                    GameType gameType = mapGameTypeFromEvent(r.get("gameType").toString()) ;
+                    collector.collect(new PlayerLookingForGameEvent(eventTime, playerId, gameType));
                     break;
             }
         });
+    }
+
+    private static GameType mapGameTypeFromEvent(String gt) {
+        switch(gt) {
+            case "FourVsFour":
+                return GameType.FOUR_VS_FOUR;
+            case "OneVsOne":
+                return GameType.ONE_VS_ONE;
+            case "ThreeVsThree":
+                return GameType.THREE_VS_THREE;
+            case "TwoVsTwo":
+                return GameType.TWO_VS_TWO;
+            default:
+                throw new RuntimeException("Unknown game type");
+        }
     }
 
     @Override
