@@ -4,10 +4,10 @@ import com.devraccoon.models.PlayerEvent;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
-import org.apache.flink.streaming.api.functions.ProcessFunction;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
-public class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Long, Long>> {
+public class PlayerEventToCounts extends KeyedProcessFunction<Integer, PlayerEvent, Tuple2<Long, Long>> {
 
     private long registrations;
     private long online;
@@ -24,7 +24,7 @@ public class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Lon
     @Override
     public void processElement(
             PlayerEvent playerEvent,
-            ProcessFunction<PlayerEvent, Tuple2<Long, Long>>.Context context,
+            KeyedProcessFunction<Integer, PlayerEvent, Tuple2<Long, Long>>.Context context,
             Collector<Tuple2<Long, Long>> collector) {
 
         switch (playerEvent.getEventType()) {
@@ -43,5 +43,4 @@ public class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Lon
 
         collector.collect(Tuple2.of(registrations, online));
     }
-
 }
