@@ -45,7 +45,14 @@ public class MatchGamesJob {
                 .monitorContinuously(Duration.ofSeconds(2))
                 .build();
 
-        DataStream<String> mapNames = env.fromSource(fileSource, WatermarkStrategy.noWatermarks(), "Source of Map Names");
+        FileSource<String> fileSourceTwo = FileSource.forRecordStreamFormat(new TextLineFormat(), new Path("./data/maps_v2/"))
+                .monitorContinuously(Duration.ofSeconds(2))
+                .build();
+
+        DataStream<String> mapNames_one = env.fromSource(fileSource, WatermarkStrategy.noWatermarks(), "Source of Map Names 1");
+        DataStream<String> mapNames_two = env.fromSource(fileSourceTwo, WatermarkStrategy.noWatermarks(), "Source of Map Names 2");
+
+        DataStream<String> mapNames = mapNames_one.union(mapNames_two);
 
         DataStream<PlayerLookingForGameEvent> playerLookingForGameEventDataStream = PlayerEventsSource.getSource(env, kafkaParameters)
                 .flatMap(new FlatMapFunction<PlayerEvent, PlayerLookingForGameEvent>() {
@@ -66,6 +73,7 @@ public class MatchGamesJob {
                 .keyBy(e -> e.getGameType().getTotalNumberOfPlayers())
                 .connect(broadcastStreamOfMapNames)
                 .process(new FindGameMatch())
+                .uid("find-game-process")
                 .print();
 
         env.execute("Matching Players to Games");
