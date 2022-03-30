@@ -1,0 +1,8 @@
+.DS_Store
+.idea
+.vagrant
+target
+out/*
+input/*
+/dependency-reduced-pom.xml
+/march-28-flink.iml

@@ -1,0 +1,249 @@
+version: '3.3'
+
+volumes:
+  zookeeper-data:
+  zookeeper-log:
+  kafka-data:
+  minio-data:
+
+services:
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.0.1
+    hostname: zookeeper
+    container_name: zookeeper
+    restart: unless-stopped
+    volumes:
+      - zookeeper-log:/var/lib/zookeeper/log
+      - zookeeper-data:/var/lib/zookeeper/data
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  zookeeper-navigator:
+    image: elkozmon/zoonavigator:latest
+    hostname: zookeeper-navigator
+    container_name: zookeeper-navigator
+    restart: unless-stopped
+    ports:
+      - "9091:9000"
+    environment:
+      HTTP_PORT: 9000
+
+  kafka:
+    image: confluentinc/cp-server:7.0.1
+    hostname: kafka
+    container_name: kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka:29092
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      CONFLUENT_METRICS_ENABLE: "false"
+      CONFLUENT_SUPPORT_CUSTOMER_ID: "anonymous"
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.0.1
+    hostname: schema-registry
+    container_name: schema-registry
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka:29092"
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:7.0.1
+    hostname: control-center
+    container_name: control-center
+    restart: unless-stopped
+    depends_on:
+      - kafka
+      - schema-registry
+    ports:
+      - "9021:9021"
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: "kafka:29092"
+      CONTROL_CENTER_CONNECT_CONNECT-DEFAULT_CLUSTER: "connect:8083"
+      CONTROL_CENTER_KSQL_KSQLDB1_URL: "http://ksqldb-server:8088"
+      CONTROL_CENTER_KSQL_KSQLDB1_ADVERTISED_URL: "http://localhost:8088"
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
+      CONFLUENT_METRICS_TOPIC_REPLICATION: 1
+      PORT: 9021
+
+  rest-proxy:
+    image: confluentinc/cp-kafka-rest:7.0.1
+    hostname: rest-proxy
+    container_name: rest-proxy
+    restart: unless-stopped
+    depends_on:
+      - kafka
+      - schema-registry
+    ports:
+      - "8082:8082"
+    environment:
+      KAFKA_REST_HOST_NAME: rest-proxy
+      KAFKA_REST_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_REST_LISTENERS: "http://0.0.0.0:8082"
+      KAFKA_REST_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+
+  battle-net-emulator:
+    image: dockerraccoon/battle-net-emulator:0.2.1
+    hostname: battle-net-emulator
+    container_name: battle-net-emulator
+    restart: unless-stopped
+    depends_on:
+      - kafka
+      - schema-registry
+    environment:
+      KAFKA_BOOTSTRAP_SERVER: "kafka:29092"
+      SCHEMA_REGISTRY_URI: "http://schema-registry:8081"
+
+  minio:                              # you can start this service by running "docker-compose --profile s3 up -d"
+    profiles:
+      - s3
+    image: quay.io/minio/minio
+    hostname: minio
+    container_name: minio
+    restart: unless-stopped
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "minioadmin"
+      MINIO_ROOT_PASSWORD: "minioadmin"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  prometheus:                        # you can start this service by running "docker-compose --profile monitoring up -d"
+    profiles:
+      - monitoring
+    image: prom/prometheus:latest
+    hostname: prometheus
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - /docker-compose/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:                          # you can start this service by running "docker-compose --profile monitoring up -d"
+    profiles:
+      - monitoring
+    image: grafana/grafana:latest
+    hostname: grafana
+    container_name: grafana
+    restart: unless-stopped
+    volumes:
+      - /docker-compose/grafana/grafana.ini:/etc/grafana/grafana.ini
+      - /docker-compose/grafana/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yaml
+    ports:
+      - "3000:3000"
+    links:
+      - prometheus
+
+  jobmanager:                    # you can start this service by running "docker-compose --profile flink up -d"
+    profiles:
+      - flink
+    image: flink:latest
+    hostname: jobmanager
+    container_name: jobmanager
+    restart: unless-stopped
+    command: jobmanager
+    ports:
+      - "7001:8081"
+    environment:
+      ENABLE_BUILT_IN_PLUGINS: "flink-s3-fs-hadoop-1.14.4.jar;flink-gelly_2.12-1.14.4.jar;flink-gelly-scala_2.12-1.14.4.jar"
+    volumes:
+      - /docker-compose/flink/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml
+
+  jobmanager2:                    # you can start this service by running "docker-compose --profile flink up -d"
+    profiles:
+      - flink-2
+    image: flink:latest
+    hostname: jobmanager2
+    container_name: jobmanager2
+    restart: unless-stopped
+    command: jobmanager
+    ports:
+      - "7002:8081"
+    environment:
+      ENABLE_BUILT_IN_PLUGINS: "flink-s3-fs-hadoop-1.14.4.jar;flink-gelly_2.12-1.14.4.jar;flink-gelly-scala_2.12-1.14.4.jar"
+    volumes:
+      - /docker-compose/flink/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml
+
+  jobmanager3:                    # you can start this service by running "docker-compose --profile flink up -d"
+    profiles:
+      - flink-2
+    image: flink:latest
+    hostname: jobmanager3
+    container_name: jobmanager3
+    restart: unless-stopped
+    command: jobmanager
+    ports:
+      - "7003:8081"
+    environment:
+      ENABLE_BUILT_IN_PLUGINS: "flink-s3-fs-hadoop-1.14.4.jar;flink-gelly_2.12-1.14.4.jar;flink-gelly-scala_2.12-1.14.4.jar"
+    volumes:
+      - /docker-compose/flink/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml
+
+  taskmanager:                  # you can start this service by running "docker-compose --profile flink up -d"
+    profiles:
+      - flink
+    image: flink:latest
+    hostname: taskmanager
+    container_name: taskmanager
+    restart: unless-stopped
+    command: taskmanager
+    depends_on:
+      - jobmanager
+    environment:
+      ENABLE_BUILT_IN_PLUGINS: "flink-s3-fs-hadoop-1.14.4.jar;flink-gelly_2.12-1.14.4.jar;flink-gelly-scala_2.12-1.14.4.jar"
+    volumes:
+      - /docker-compose/flink/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml
+
+  taskmanager2:                  # you can start this service by running "docker-compose --profile flink up -d"
+    profiles:
+      - flink
+    image: flink:latest
+    hostname: taskmanager2
+    container_name: taskmanager2
+    restart: unless-stopped
+    command: taskmanager
+    depends_on:
+      - jobmanager
+    environment:
+      ENABLE_BUILT_IN_PLUGINS: "flink-s3-fs-hadoop-1.14.4.jar;flink-gelly_2.12-1.14.4.jar;flink-gelly-scala_2.12-1.14.4.jar"
+    volumes:
+      - /docker-compose/flink/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml
