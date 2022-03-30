@@ -34,7 +34,6 @@ public class MatchGamesJob {
 
         playerLookingForGameEventDataStream.print();
 
-
         env.execute("Matching Players to Games");
     }
 }
