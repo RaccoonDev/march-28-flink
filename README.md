@@ -11,7 +11,7 @@
 
 3- Install VirtualBox, Vagrant and Docker
 
-    brew install virtualbox vagrant docker
+    brew install virtualbox vagrant docker docker-compose
 
 3- Start the vagrant virtual machine by running command below
 
