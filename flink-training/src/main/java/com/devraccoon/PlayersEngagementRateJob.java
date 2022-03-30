@@ -10,10 +10,12 @@ import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
@@ -28,9 +30,9 @@ import org.apache.flink.core.fs.Path;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
-import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.datastream.WindowedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.streaming.api.functions.windowing.AllWindowFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
@@ -39,6 +41,7 @@ import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -71,7 +74,7 @@ public class PlayersEngagementRateJob {
                 .setBootstrapServers(bootstrapServers)
                 .setTopics(topic)
                 .setGroupId("battle-net-events-processor-group-1")
-                .setStartingOffsets(OffsetsInitializer.earliest())
+                .setStartingOffsets(OffsetsInitializer.committedOffsets(OffsetResetStrategy.EARLIEST))
                 .setDeserializer(new PlayerEventAvroDeserializerScheme(schemaRegistryUrl, topic))
                 .build();
 
@@ -90,7 +93,15 @@ public class PlayersEngagementRateJob {
                 watermarkStrategy,
                 "player-events");
 
+//        processCountOffline(playerEvents);
+        processPlayersEngagement(playerEvents);
+
+        env.execute("Battle Net Engagement Rate Job");
+    }
+
+    private static void processCountOffline(DataStream<PlayerEvent> playerEvents) {
         KeyedStream<PlayerEvent, UUID> playerEventUUIDKeyedStream = playerEvents.keyBy(PlayerEvent::getPlayerId);
+
         WindowedStream<PlayerEvent, UUID, TimeWindow> window = playerEventUUIDKeyedStream.window(SlidingEventTimeWindows.of(Time.seconds(20), Time.seconds(5)));
         DataStream<Integer> process = window.process(new DetectOfflineEvent());
         DataStream<String> countOfUsersWithoutOfflineEvents = process
@@ -110,14 +121,12 @@ public class PlayersEngagementRateJob {
                 )
                 .build();
         countOfUsersWithoutOfflineEvents.sinkTo(fileSink);
-
-        processPlayersEngagement(playerEvents);
-
-        env.execute("Battle Net Engagement Rate Job");
     }
 
     private static void processPlayersEngagement(DataStream<PlayerEvent> playerEvents) {
-        DataStream<Tuple2<Long, Long>> onlineAndRegistrationCountsStream = playerEvents.process(new PlayerEventToCounts());
+        DataStream<Tuple2<Long, Long>> onlineAndRegistrationCountsStream = playerEvents
+                .keyBy(k -> 0)
+                .process(new PlayerEventToCounts());
         DataStream<String> playersEngagementRatesStream = onlineAndRegistrationCountsStream.map(new MapFunction<Tuple2<Long, Long>, String>() {
             @Override
             public String map(Tuple2<Long, Long> pair) throws Exception {
@@ -196,16 +205,26 @@ class PlayerEventAvroDeserializerScheme implements KafkaRecordDeserializationSch
 
 }
 
-class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Long, Long>> {
+class PlayerEventToCounts extends KeyedProcessFunction<Integer, PlayerEvent, Tuple2<Long, Long>> {
 
-    private long registrations;
-    private long online;
+    private transient ValueState<Long> stateRegistrations;
+    private transient ValueState<Long> stateOnline;
 
     private transient Counter counterRegistrations;
     private transient Counter counterOnline;
 
     @Override
     public void open(Configuration parameters) throws Exception {
+
+        // State init
+        this.stateRegistrations = getRuntimeContext().getState(new ValueStateDescriptor<>(
+                "registrationsCount", BasicTypeInfo.LONG_TYPE_INFO
+        ));
+        this.stateOnline = getRuntimeContext().getState(new ValueStateDescriptor<>(
+                "onlineCount", BasicTypeInfo.LONG_TYPE_INFO
+        ));
+
+        // Metrics init
         this.counterRegistrations = getRuntimeContext().getMetricGroup().counter("registrations_total");
         this.counterOnline = getRuntimeContext().getMetricGroup().counter("online_total");
     }
@@ -213,8 +232,11 @@ class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Long, Long
     @Override
     public void processElement(
             PlayerEvent playerEvent,
-            ProcessFunction<PlayerEvent, Tuple2<Long, Long>>.Context context,
+            KeyedProcessFunction<Integer, PlayerEvent, Tuple2<Long, Long>>.Context context,
             Collector<Tuple2<Long, Long>> collector) throws Exception {
+
+        long registrations = Optional.ofNullable(stateRegistrations.value()).orElse(0L);
+        long online = Optional.ofNullable(stateOnline.value()).orElse(0L);
 
         switch (playerEvent.getEventType()) {
             case REGISTERED:
@@ -229,6 +251,9 @@ class PlayerEventToCounts extends ProcessFunction<PlayerEvent, Tuple2<Long, Long
                 online--;
                 counterOnline.dec();
         }
+
+        stateRegistrations.update(registrations);
+        stateOnline.update(online);
 
         collector.collect(Tuple2.of(registrations, online));
     }
