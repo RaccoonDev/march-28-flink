@@ -6,3 +6,4 @@ out/*
 input/*
 /dependency-reduced-pom.xml
 /march-28-flink.iml
+/flink-training/flink-training.iml

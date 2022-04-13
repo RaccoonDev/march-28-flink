@@ -16,7 +16,7 @@ public class StreamSetup {
         );
 
         env.enableCheckpointing(Duration.ofSeconds(10).toMillis());
-        env.getCheckpointConfig().setCheckpointTimeout(Duration.ofMinutes(15).toMillis());
+        env.getCheckpointConfig().setCheckpointTimeout(Duration.ofMinutes(1).toMillis());
         env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
         env.getCheckpointConfig().setTolerableCheckpointFailureNumber(3);
         env.getCheckpointConfig().setCheckpointStorage(checkpointStoragePath);

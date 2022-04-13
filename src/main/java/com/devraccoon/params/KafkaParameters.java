@@ -67,7 +67,7 @@ public class KafkaParameters {
     }
 
     public static KafkaParameters fromParamToolForLongRideJob(ParameterTool params) {
-        final String topic =  Optional.ofNullable(params.get("topic")).orElse("new-avro-stream");
+        final String topic =  Optional.ofNullable(params.get("topic")).orElse("taxi-ride-events");
         final String schemaRegistryUrl = Optional.ofNullable(params.get("schema-registry-url")).orElse("http://localhost:8081");
         final String bootstrapServers = Optional.ofNullable(params.get("bootstrap-servers")).orElse("localhost:9092");
         final String groupId = Optional.ofNullable(params.get("group-id")).orElse("long-rides-processor-group");

@@ -117,6 +117,18 @@ services:
       KAFKA_REST_LISTENERS: "http://0.0.0.0:8082"
       KAFKA_REST_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
 
+  taxi-ride-event-producer:
+    image: zuptalo/taxi-ride-event-producer:latest
+    hostname: taxi-ride-event-producer
+    container_name: taxi-ride-event-producer
+    restart: unless-stopped
+    depends_on:
+      - kafka
+      - schema-registry
+    environment:
+      BOOTSTRAP_SERVER: "kafka:29092"
+      SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+
   battle-net-emulator:
     image: dockerraccoon/battle-net-emulator:0.2.1
     hostname: battle-net-emulator

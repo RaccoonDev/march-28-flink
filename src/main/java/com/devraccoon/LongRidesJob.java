@@ -107,7 +107,7 @@ public class LongRidesJob {
                 .process(new AlertFunction());
 
         FileSink<Long> fileSink = FileSink.forRowFormat(
-                new Path(outputParams.getOutputPath() + "/engagementRate"),
+                new Path(outputParams.getOutputPath() + "/taxi-rides"),
                 new SimpleStringEncoder<Long>("UTF-8")
         )
                 .build();
