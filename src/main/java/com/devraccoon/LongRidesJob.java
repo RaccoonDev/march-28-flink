@@ -65,8 +65,6 @@ public class LongRidesJob {
 
         // set up streaming execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(1);
-        env.setMaxParallelism(1);
         StreamSetup.setupRestartsAndCheckpoints(env, outputParams.getCheckpointsPath());
         KafkaSource<TaxiRide> kafkaSource = KafkaSource.<TaxiRide>builder()
                 .setBootstrapServers(kafkaParameters.getBootstrapServers())
@@ -99,9 +97,7 @@ public class LongRidesJob {
         DataStream<TaxiRide> rides = env.fromSource(kafkaSource, watermarkStrategy, "taxi-rides1");
         final DataStreamSource<TaxiRide> rides1 = env.fromElements(new TaxiRide(1, true, (short) 1, 1, 1, Instant.now().toEpochMilli()),
                 new TaxiRide(2, true,  (short) 2, 2, 2, Instant.now().toEpochMilli()));
-        //env.f
-        //rides.print();
-        // create the pipeline
+
         final SingleOutputStreamOperator<Long> longRides = rides.assignTimestampsAndWatermarks(watermarkStrategy)
                 .keyBy(ride -> ride.getRideId())
                 .process(new AlertFunction());
@@ -206,7 +202,7 @@ public class LongRidesJob {
 
         private long getTimerTime(TaxiRide ride) throws RuntimeException {
             if (ride.isStart()) {
-                return ride.getEventTime().plusSeconds(2).toEpochMilli();
+                return ride.getEventTime().plusSeconds(60*120).toEpochMilli();
             } else {
                 throw new RuntimeException("Can not get start time from END event.");
             }
