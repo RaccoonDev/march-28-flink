@@ -27,9 +27,6 @@ import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import java.time.Duration;
 import java.time.Instant;
 
-//import org.apache.flink.training.exercises.common.datatypes.TaxiRide;
-//import org.apache.flink.training.exercises.common.sources.TaxiRideGenerator;
-
 public class LongRidesJob {
 
     private KafkaParameters kafkaParameters;
