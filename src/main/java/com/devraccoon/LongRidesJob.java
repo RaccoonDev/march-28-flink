@@ -1,50 +1,36 @@
 package com.devraccoon;
-import com.devraccoon.models.PlayerEvent;
 import com.devraccoon.models.TaxiRide;
 import com.devraccoon.params.KafkaParameters;
 import com.devraccoon.params.OutputParams;
 import com.devraccoon.processes.TaxiRideAvroDeserializerScheme;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
-import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.file.sink.FileSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
-import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
-import org.apache.flink.streaming.api.functions.sink.PrintSinkFunction;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.api.functions.source.SourceFunction;
-//import org.apache.flink.training.exercises.common.datatypes.TaxiRide;
-//import org.apache.flink.training.exercises.common.sources.TaxiRideGenerator;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.util.Collector;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 
+//import org.apache.flink.training.exercises.common.datatypes.TaxiRide;
+//import org.apache.flink.training.exercises.common.sources.TaxiRideGenerator;
+
 public class LongRidesJob {
-    //private final SourceFunction<TaxiRide> source;
-    //private final SinkFunction<Long> sink;
 
     private KafkaParameters kafkaParameters;
     private OutputParams outputParams;
