@@ -27,6 +27,10 @@ import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import java.time.Duration;
 import java.time.Instant;
 
+/*
+  Pass as Program Arguments when submitting this job in Apache Flink Dashboard:
+  --schema-registry-url http://schema-registry:8081 --bootstrap-servers kafka:29092
+ */
 public class LongRidesJob {
 
     private KafkaParameters kafkaParameters;

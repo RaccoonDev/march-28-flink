@@ -165,7 +165,7 @@
 							</filters>
 							<transformers>
 								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-									<mainClass>com.devraccoon.PlayersEngagementRateJob</mainClass>
+									<mainClass>com.devraccoon.LongRidesJob</mainClass>
 								</transformer>
 							</transformers>
 						</configuration>
