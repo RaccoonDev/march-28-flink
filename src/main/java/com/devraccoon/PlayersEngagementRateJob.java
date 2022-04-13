@@ -60,7 +60,7 @@ public class PlayersEngagementRateJob {
         });
 
         FileSink<String> fileSink = FileSink.forRowFormat(
-                        new Path(outputParams.getOutputPath() + "/engagementRate"),
+                        new Path(outputParams.getOutputPath() + "/longRides"),
                         new SimpleStringEncoder<String>("UTF-8")
                 )
                 .build();

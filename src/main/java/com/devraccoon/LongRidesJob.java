@@ -1,6 +1,8 @@
 package com.devraccoon;
 import com.devraccoon.models.PlayerEvent;
 import com.devraccoon.models.TaxiRide;
+import com.devraccoon.params.KafkaParameters;
+import com.devraccoon.params.OutputParams;
 import com.devraccoon.processes.TaxiRideAvroDeserializerScheme;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -9,16 +11,21 @@ import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
+import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
+import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.connector.file.sink.FileSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
+import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.sink.PrintSinkFunction;
@@ -39,11 +46,13 @@ public class LongRidesJob {
     //private final SourceFunction<TaxiRide> source;
     //private final SinkFunction<Long> sink;
 
-    /** Creates a job using the source and sink provided. */
-    public LongRidesJob(SourceFunction<TaxiRide> source, SinkFunction<Long> sink) {
+    private KafkaParameters kafkaParameters;
+    private OutputParams outputParams;
 
-        //this.source = source;
-        //this.sink = sink;
+    /** Creates a job using the source and sink provided. */
+    public LongRidesJob(KafkaParameters kafkaParameters, OutputParams outputParams) {
+        this.kafkaParameters = kafkaParameters;
+        this.outputParams = outputParams;
     }
 
     /**
@@ -58,12 +67,13 @@ public class LongRidesJob {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
         env.setMaxParallelism(1);
+        StreamSetup.setupRestartsAndCheckpoints(env, outputParams.getCheckpointsPath());
         KafkaSource<TaxiRide> kafkaSource = KafkaSource.<TaxiRide>builder()
-                .setBootstrapServers("localhost:9092")
-                .setTopics("taxi-ride-topic1")
-                .setGroupId("taxi-ride-consumer2")
+                .setBootstrapServers(kafkaParameters.getBootstrapServers())
+                .setTopics(kafkaParameters.getTopic())
+                .setGroupId(kafkaParameters.getGroupId())
                 .setStartingOffsets(OffsetsInitializer.committedOffsets(OffsetResetStrategy.EARLIEST))
-                .setDeserializer(new TaxiRideAvroDeserializerScheme("http://localhost:8081", "taxi-ride-topic1"))
+                .setDeserializer(new TaxiRideAvroDeserializerScheme(kafkaParameters.getSchemaRegistryUrl(), kafkaParameters.getTopic()))
                 //.setDeserializer(new TaxiRideKafkaRecordDeserializationSchema())
                 .build();
         // start the data generator
@@ -92,40 +102,21 @@ public class LongRidesJob {
         //env.f
         //rides.print();
         // create the pipeline
-        rides.assignTimestampsAndWatermarks(watermarkStrategy)
+        final SingleOutputStreamOperator<Long> longRides = rides.assignTimestampsAndWatermarks(watermarkStrategy)
                 .keyBy(ride -> ride.getRideId())
-                .process(new AlertFunction()).print();
+                .process(new AlertFunction());
 
+        FileSink<Long> fileSink = FileSink.forRowFormat(
+                new Path(outputParams.getOutputPath() + "/engagementRate"),
+                new SimpleStringEncoder<Long>("UTF-8")
+        )
+                .build();
+
+        longRides.sinkTo(fileSink);
         // execute the pipeline and return the result
         return env.execute("Long Taxi Rides");
     }
 
-    class TaxiRideKafkaRecordDeserializationSchema implements KafkaRecordDeserializationSchema<TaxiRide> {
-        transient ObjectMapper objectMapper = new ObjectMapper();
-
-        public TaxiRideKafkaRecordDeserializationSchema() {
-
-        }
-
-        @Override
-        public void open(DeserializationSchema.InitializationContext context) throws Exception {
-            objectMapper.registerModule(new JavaTimeModule());
-            objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        }
-
-        @Override
-        public void deserialize(ConsumerRecord<byte[], byte[]> consumerRecord, Collector<TaxiRide> collector) throws IOException {
-            System.out.println("record = " + consumerRecord.value());
-            final TaxiRide taxiRide = objectMapper.readValue(consumerRecord.value(), TaxiRide.class);
-            collector.collect(taxiRide);
-
-        }
-
-        @Override
-        public TypeInformation getProducedType() {
-            return TypeExtractor.getForClass(TaxiRide.class);
-        }
-    }
 
     /**
      * Main method.
@@ -133,8 +124,13 @@ public class LongRidesJob {
      * @throws Exception which occurs during job execution.
      */
     public static void main(String[] args) throws Exception {
-        LongRidesJob job =
-                new LongRidesJob(null, new PrintSinkFunction<>());
+        ParameterTool params = ParameterTool.fromArgs(args);
+
+        KafkaParameters kafkaParameters = KafkaParameters.fromParamToolForLongRideJob(params);
+        OutputParams outputParams = OutputParams.fromParamTool(params);
+
+        LongRidesJob job = new LongRidesJob(kafkaParameters, outputParams);
+                //new LongRidesJob(null, new PrintSinkFunction<>());
 
         job.execute();
     }
@@ -193,12 +189,13 @@ public class LongRidesJob {
         @Override
         public void onTimer(long timestamp, OnTimerContext context, Collector<Long> out)
                 throws Exception {
+            if(rideState.value()!=null) {
+                // the timer only fires if the ride was too long
+                out.collect(rideState.value().getRideId());
 
-            // the timer only fires if the ride was too long
-            out.collect(rideState.value().getRideId());
-
-            // clearing now prevents duplicate alerts, but will leak state if the END arrives
-            rideState.clear();
+                // clearing now prevents duplicate alerts, but will leak state if the END arrives
+                rideState.clear();
+            }
         }
 
         private boolean rideTooLong(TaxiRide startEvent, TaxiRide endEvent) {

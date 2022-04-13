@@ -1,7 +1,5 @@
 package com.devraccoon.models;
 
-import org.apache.flink.streaming.api.functions.source.datagen.DataGenerator;
-
 import java.io.Serializable;
 import java.time.Instant;
 import java.util.Objects;
@@ -9,21 +7,21 @@ import java.util.Objects;
 public class TaxiRide implements Serializable {
     public long rideId;
     public boolean isStart;
-    public short passengerCnt;
+    public long passengerCnt;
     public long taxiId;
     public long driverId;
-    public long eventTimeMillis;
+    public long eventTime;
 
     public TaxiRide() {
     }
 
-    public TaxiRide(long rideId, boolean isStart,  short passengerCnt, long taxiId, long driverId, long eventTimeMillis) {
+    public TaxiRide(long rideId, boolean isStart,  long passengerCnt, long taxiId, long driverId, long eventTime) {
         this.rideId = rideId;
         this.isStart = isStart;
         this.passengerCnt = passengerCnt;
         this.taxiId = taxiId;
         this.driverId = driverId;
-        this.eventTimeMillis = eventTimeMillis;
+        this.eventTime = eventTime;
     }
 
     public void setRideId(long rideId) {
@@ -47,8 +45,8 @@ public class TaxiRide implements Serializable {
         this.driverId = driverId;
     }
 
-    public void setEventTimeMillis(long eventTimeMillis) {
-        this.eventTimeMillis = eventTimeMillis;
+    public void setEventTime(long eventTimeMillis) {
+        this.eventTime = eventTimeMillis;
     }
 
     public long getRideId() {
@@ -60,10 +58,10 @@ public class TaxiRide implements Serializable {
     }
 
     public Instant getEventTime() {
-        return Instant.ofEpochMilli(eventTimeMillis);
+        return Instant.ofEpochMilli(eventTime);
     }
 
-    public short getPassengerCnt() {
+    public long getPassengerCnt() {
         return passengerCnt;
     }
 
@@ -90,7 +88,7 @@ public class TaxiRide implements Serializable {
 
     /** Gets the ride's time stamp as a long in millis since the epoch. */
     public long getEventTimeMillis() {
-        return eventTimeMillis;
+        return eventTime;
     }
 
     @Override

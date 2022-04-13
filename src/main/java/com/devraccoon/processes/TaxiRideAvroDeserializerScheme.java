@@ -68,20 +68,16 @@ public class TaxiRideAvroDeserializerScheme implements KafkaRecordDeserializatio
 
     @Override
     public void deserialize(ConsumerRecord<byte[], byte[]> consumerRecord, Collector<TaxiRide> collector) throws IOException {
-        //GenericRecord r = (GenericRecord) deserializer.deserialize(topic, consumerRecord.value());
-        /*String schemaClassName = r.getSchema().getName();
-        System.out.println("schemaClassName = " + schemaClassName);*/
-        /*final JsonNode r = objectMapper.readTree(new String(consumerRecord.value()));
-        long rideId = r.get("rideId").asLong();
-        long taxiId = r.get("taxiId").asLong();
-        long driverId = r.get("driverId").asLong();
-        short passengerCnt = (short)r.get("passengerCnt").asInt();
-        long eventTimeMillis = r.get("eventTimeMillis").asLong();
-        boolean start = r.get("start").asBoolean();
-        TaxiRide taxiRide = new TaxiRide(rideId, start, passengerCnt, taxiId, driverId, eventTimeMillis);
+        GenericRecord r = (GenericRecord) deserializer.deserialize(topic, consumerRecord.value());
+        String schemaClassName = r.getSchema().getName();
+        long rideId = (long) r.get("rideId");
+        long taxiId = (long) r.get("taxiId");
+        long driverId = (long) r.get("driverId");
+        long passengerCnt = (long)r.get("passengerCnt");
+        long eventTime = (long) r.get("eventTime");
+        boolean start = (boolean) r.get("isStart");
+        TaxiRide taxiRide = new TaxiRide(rideId, start, passengerCnt, taxiId, driverId, eventTime);
 
-        jsonNode.get()*/
-        final TaxiRide taxiRide = objectMapper.readValue(consumerRecord.value(), TaxiRide.class);
         collector.collect(taxiRide);
     }
 
